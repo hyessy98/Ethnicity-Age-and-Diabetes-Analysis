@@ -1,0 +1,173 @@
+---
+title: "QTM151_Final_Project"
+author: "Hyesun Jun"
+date: "4/12/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(Hmisc)
+library(SASxport)
+library(ggplot2)
+library(tidyverse)
+library(dplyr)
+library(forcats)
+library(plotly)
+library(foreign)
+demo <- read.xport("DEMO_J.XPT")
+bloodpressure <- read.xport("BPQ_J.XPT")
+cholesterol <- read.xport("TCHOL_J.XPT")
+activity <- read.xport("PAQ_J.XPT")
+medication <- read.xport("RXQ_RX_J.XPT")
+condition <- read.xport("MCQ_J.XPT")
+diabetes <- read.xport("DIQ_J.XPT")
+trigly <- read.xport("TRIGLY_J.xpt")
+```
+
+```{r}
+
+# RIAGENDR: Gender of the Participant (gender vs. income)
+# RIDAGEYR: Age in years
+# RIDRETH3: This is the race-ethnicity variable
+
+#age, gender, race-ethnicity (demo), cholesterol (lab), blood pressure (examination),  physical activities, previous diagnoses, taking medications (Questionnaire) complete analysis of diabetes. 
+
+# https://www.mayoclinic.org/diseases-conditions/diabetes/symptoms-causes/syc-20371444
+
+
+
+demo2 <- demo
+demo2$RIDRETH3 <- factor(demo2$RIDRETH3)
+
+race_ethnicity <- demo2 %>%
+  select(SEQN,RIDRETH3) %>%
+  mutate(race = fct_recode(RIDRETH3,
+             "non-Hispanic multiracial" = "7",
+             "non-Hispanic Asian" = "6",
+             "non-Hispanic Black" = "4",
+             "non-Hispanic White" = "3",
+             "Other Hispanic" = "2",
+             "Hispanic" = "1"))
+
+
+```
+
+
+```{r}
+
+age_diabetes <- diabetes %>%
+  select(SEQN, DID040) %>%
+  drop_na() %>%
+  mutate(age=DID040) %>% #Age when the doctor told you have diabetes
+  filter(age<100)
+  
+race_age <- inner_join(race_ethnicity, age_diabetes, by="SEQN") %>%
+  select(race, age)#Inner join with the race and age dataset since they both have the common column, SEQN. 
+
+
+plot<-ggplot(data=race_age, aes(x=age))+geom_histogram(binwidth=10)+
+  facet_wrap(~race)
+
+ggplotly(plot) %>%
+  layout(title="Figure 1:Age diagnosed for Diabetes by Race")
+
+```
+```{r}
+trig <- trigly %>%
+  select(SEQN, LBXTR) %>%
+  drop_na()
+
+race_trig <- inner_join(race_ethnicity, trig, by="SEQN") %>%
+  select(race, LBXTR)#Inner join with the race and Trig dataset since they both have the common column, SEQN. 
+
+plot2 <- race_trig %>%
+  filter(LBXTR<=150)%>% # remove outliers above 150 to see the trend. 
+  ggplot(aes(x=race,y=LBXTR))+
+  geom_boxplot() # Non-Hispanic White is most prevalent to diabetes
+
+```
+
+```{r}
+
+age_screening <- demo %>%
+  select(SEQN, RIDAGEYR) %>%
+  drop_na() %>%
+  filter(RIDAGEYR < 100) 
+age_screening
+
+trig_age <- inner_join(trig, age_screening, by="SEQN") %>%
+  mutate(age=RIDAGEYR, triglyceride=LBXTR) %>%
+  select(SEQN, age, triglyceride)
+trig_age
+
+#the correlation between average triglyceride level and age=scatterplot
+trig_age %>%
+  group_by(age) %>%
+  summarise(average_trig = mean(triglyceride)) %>%
+  ggplot(aes(x = age, y = average_trig)) + geom_point() + geom_smooth() + xlab("Age") + ylab("Average Triglyceride Level (mg/dL)") + labs(title="Average Triglyceride Level (mg/dL) by Age")
+
+```
+```{r}
+#trig level by age in different race
+demo$race_char <- as.character(demo$RIDRETH3)
+str(demo)
+
+race_ethnicity <- demo %>%
+  select(SEQN,race_char, RIDRETH3) %>%
+  mutate(Race = fct_recode(race_char,
+    "non-Hispanic multiracial" = "7",
+    "non-Hispanic Asian" = "6",
+    "non-Hispanic Black" = "4",
+    "non-Hispanic White" = "3",
+    "Other Hispanic" = "2",
+    "Hispanic" = "1" ))
+race_ethnicity
+
+age_race_trig <- inner_join(trig_age, race_ethnicity, by="SEQN")
+
+avg_age_race_trig <- age_race_trig %>%
+  group_by(Race, age) %>%
+  summarise(average_triglyceride = mean(triglyceride))
+avg_age_race_trig
+#animate scatterplot for age, race, trig
+p2 <- ggplot(data=avg_age_race_trig, aes(x=age, y= average_triglyceride)) + geom_point(aes(color=Race, size=average_triglyceride, frame=age)) + geom_smooth() + xlab("Age") + ylab("Average Triglyceride Level (mg/dL)") + labs(title="Average Triglyceride Level (mg/dL) by Age in Different Race") + theme(plot.title=element_text(size=12))
+ggplotly(p2) %>%
+  animation_opts(transition = 500, easing = "linear", mode = "immediate")
+
+```
+```{r}
+bloodpres <- bloodpressure %>%
+  select(SEQN, BPQ020,BPQ080) %>%
+  drop_na()
+names(bloodpres)=c("SEQN", "High Blood Pressure", "High Cholesterol")
+
+
+bloodpresNew<- pivot_longer(bloodpres, c(`High Blood Pressure`,`High Cholesterol`), names_to="Heart Disease Risk Factors", values_to="Have it or not")
+
+age_screening <- demo %>%
+  select(SEQN, RIDAGEYR) %>%
+  drop_na() %>%
+  filter(RIDAGEYR < 100) 
+
+bloodpres_age <- inner_join(bloodpresNew, age_screening, by="SEQN") %>%
+  mutate(age=RIDAGEYR)
+bloodpres_age <- subset (bloodpres_age, select = -RIDAGEYR)
+
+bloodpres_age <- subset (bloodpres_age, bloodpres_age$`Have it or not` == "1")
+bloodpres_age <- subset (bloodpres_age, select = -`Have it or not`)
+bloodpres_age <- subset (bloodpres_age, select = -SEQN)
+
+ggplot(data = bloodpres_age, mapping = aes(x = `Heart Disease Risk Factors`, y = age)) +
+  geom_boxplot() +
+  labs(title="Heart Disease Risk Factors by Age")
+
+
+
+
+```
+
+
+
+
+
